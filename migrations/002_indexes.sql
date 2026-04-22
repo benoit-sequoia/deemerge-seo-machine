@@ -1,0 +1,11 @@
+CREATE INDEX IF NOT EXISTS idx_gsc_page_daily_page_date ON gsc_page_daily(page_url, date);
+CREATE INDEX IF NOT EXISTS idx_gsc_query_daily_page_date ON gsc_query_daily(page_url, date);
+CREATE INDEX IF NOT EXISTS idx_gsc_query_daily_query_date ON gsc_query_daily(query, date);
+CREATE INDEX IF NOT EXISTS idx_recovery_candidates_score ON recovery_candidates(status, opportunity_score DESC);
+CREATE INDEX IF NOT EXISTS idx_recovery_queue_status_priority ON recovery_queue(status, priority DESC, queued_at);
+CREATE INDEX IF NOT EXISTS idx_page_versions_page ON page_versions(page_id, version_no DESC);
+CREATE INDEX IF NOT EXISTS idx_keyword_candidates_score ON keyword_candidates(status, total_score DESC);
+CREATE INDEX IF NOT EXISTS idx_article_generation_queue_status_priority ON article_generation_queue(status, priority DESC, queued_at);
+CREATE INDEX IF NOT EXISTS idx_publish_plan_status_time ON publish_plan(status, planned_publish_ts_utc);
+CREATE INDEX IF NOT EXISTS idx_content_pages_cluster ON content_pages(cluster_id, page_type);
+CREATE INDEX IF NOT EXISTS idx_webflow_items_sync ON webflow_items(sync_status, updated_at);
