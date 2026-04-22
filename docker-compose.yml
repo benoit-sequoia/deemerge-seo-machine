@@ -2,7 +2,7 @@ services:
   app:
     container_name: deemerge_seo_app
     build:
-      context: .
+      context: https://github.com/benoit-sequoia/deemerge-seo-machine.git#main:
       dockerfile: docker/Dockerfile
     volumes:
       - deemerge_seo_data:/data
