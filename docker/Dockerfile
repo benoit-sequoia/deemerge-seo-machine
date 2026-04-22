@@ -11,9 +11,8 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY app /app/app
 COPY migrations /app/migrations
 COPY prompts /app/prompts
-COPY config /app/config
 COPY scripts /app/scripts
 
-RUN mkdir -p /data /logs /backups && chmod +x /app/scripts/hostinger_first_boot.sh
+RUN mkdir -p /app/config /data /logs /backups && chmod +x /app/scripts/hostinger_first_boot.sh
 
 CMD ["sleep", "infinity"]
