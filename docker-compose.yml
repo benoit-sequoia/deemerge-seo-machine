@@ -4,37 +4,14 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    restart: unless-stopped
-    working_dir: /app
     volumes:
-      - ./data:/data
-      - ./logs:/logs
-      - ./config:/app/config
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Singapore}
-      SQLITE_PATH: ${SQLITE_PATH:-/data/deemerge_seo_machine.db}
-      SITE_KEY: ${SITE_KEY:-deemerge}
-      SITE_NAME: ${SITE_NAME:-DEEMERGE}
-      DOMAIN: ${DOMAIN:-deemerge.ai}
-      DEEMERGE_BASE_URL: ${DEEMERGE_BASE_URL:-https://www.deemerge.ai}
-      BLOG_BASE_URL: ${BLOG_BASE_URL:-https://www.deemerge.ai/blog}
-      WEBFLOW_TOKEN: ${WEBFLOW_TOKEN:-}
-      WEBFLOW_SITE_ID: ${WEBFLOW_SITE_ID:-}
-      WEBFLOW_COLLECTION_ID: ${WEBFLOW_COLLECTION_ID:-}
-      WEBFLOW_FIELD_MAP_JSON: ${WEBFLOW_FIELD_MAP_JSON:-}
-      GSC_SITE_URL: ${GSC_SITE_URL:-https://www.deemerge.ai/}
-      GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${GOOGLE_SERVICE_ACCOUNT_JSON_B64:-}
-      DATAFORSEO_LOGIN: ${DATAFORSEO_LOGIN:-}
-      DATAFORSEO_PASSWORD: ${DATAFORSEO_PASSWORD:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      ANTHROPIC_MODEL_MAIN: ${ANTHROPIC_MODEL_MAIN:-claude-3-5-sonnet-20241022}
-      ANTHROPIC_MODEL_FAST: ${ANTHROPIC_MODEL_FAST:-claude-3-5-haiku-20241022}
-      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO:-}
-      MAX_NEW_ARTICLES_PER_WEEK: ${MAX_NEW_ARTICLES_PER_WEEK:-10}
-      MAX_REWRITES_PER_WEEK: ${MAX_REWRITES_PER_WEEK:-5}
+      - deemerge_seo_data:/data
+      - deemerge_seo_logs:/logs
+      - deemerge_seo_backups:/backups
+    restart: unless-stopped
+    command: ["sleep", "infinity"]
+
+volumes:
+  deemerge_seo_data:
+  deemerge_seo_logs:
+  deemerge_seo_backups:

@@ -9,3 +9,4 @@ CREATE INDEX IF NOT EXISTS idx_article_generation_queue_status_priority ON artic
 CREATE INDEX IF NOT EXISTS idx_publish_plan_status_time ON publish_plan(status, planned_publish_ts_utc);
 CREATE INDEX IF NOT EXISTS idx_content_pages_cluster ON content_pages(cluster_id, page_type);
 CREATE INDEX IF NOT EXISTS idx_webflow_items_sync ON webflow_items(sync_status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_error_log_worker_time ON error_log(worker_name, created_at);

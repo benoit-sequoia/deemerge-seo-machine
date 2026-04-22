@@ -1,60 +1,40 @@
 from __future__ import annotations
+
 import json
-import re
 import requests
-from ..config import Settings
+
+from app.config import Settings
 
 
 class AnthropicService:
-    base_url = "https://api.anthropic.com/v1/messages"
+    BASE_URL = "https://api.anthropic.com/v1/messages"
 
     def __init__(self, settings: Settings):
-        self.settings = settings
+        self.api_key = settings.anthropic_api_key
+        self.model_main = settings.anthropic_model_main or "claude-sonnet-4-5"
+        self.model_fast = settings.anthropic_model_fast or self.model_main
 
-    def generate_json(self, system_prompt: str, user_prompt: str, fast: bool = False) -> dict:
-        if not self.settings.has_anthropic:
-            return self._fallback_json(user_prompt)
-        model = self.settings.anthropic_model_fast if fast else self.settings.anthropic_model_main
-        payload = {
-            "model": model,
-            "max_tokens": 1600,
-            "system": system_prompt,
-            "messages": [{"role": "user", "content": user_prompt}],
-            "temperature": 0.3,
-        }
+    @property
+    def enabled(self) -> bool:
+        return bool(self.api_key)
+
+    def generate(self, prompt: str, fast: bool = False, max_tokens: int = 2500) -> str:
+        if not self.api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is missing")
+        model = self.model_fast if fast else self.model_main
         headers = {
-            "x-api-key": self.settings.anthropic_api_key,
+            "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
             "content-type": "application/json",
         }
-        resp = requests.post(self.base_url, headers=headers, json=payload, timeout=90)
-        resp.raise_for_status()
-        data = resp.json()
-        text = "".join(block.get("text", "") for block in data.get("content", []) if block.get("type") == "text")
-        try:
-            return json.loads(text)
-        except Exception:
-            return {"raw_text": text}
-
-    def _fallback_json(self, user_prompt: str) -> dict:
-        title = "DEEMERGE workflow article"
-        m = re.search(r"primary keyword:\s*(.+)", user_prompt, re.I)
-        if m:
-            title = m.group(1).strip().splitlines()[0].title()
-        body = (
-            f"<p>{title} matters because teams lose context across email and chat.</p>"
-            "<h2>Why it matters</h2><p>Related conversations get scattered and hard to act on.</p>"
-            "<h2>How DEEMERGE helps</h2><p>DEEMERGE groups related threads, summarizes context, and shows what needs attention.</p>"
-        )
-        return {
-            "title_tag": title,
-            "meta_description": f"{title} for teams using DEEMERGE.",
-            "h1": title,
-            "excerpt": f"{title} guide.",
-            "body_html": body,
-            "faq_json": [],
-            "image_prompt": f"Flat technical editorial illustration for {title}",
-            "title_options_json": [title],
-            "outline_json": ["Introduction", "Why it matters", "How DEEMERGE helps"],
-            "brief_text": f"Write about {title} and connect it naturally to DEEMERGE.",
+        payload = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": prompt}],
         }
+        response = requests.post(self.BASE_URL, headers=headers, json=payload, timeout=120)
+        response.raise_for_status()
+        data = response.json()
+        parts = data.get("content", [])
+        text_parts = [p.get("text", "") for p in parts if p.get("type") == "text"]
+        return "\n".join(text_parts).strip()

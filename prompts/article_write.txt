@@ -1,0 +1,28 @@
+Return strict JSON only.
+
+You are writing a DEEMERGE blog article.
+
+Inputs
+primary_keyword: $primary_keyword
+secondary_keywords: $secondary_keywords
+title_options: $title_options
+outline: $outline
+cta_angle: $cta_angle
+brief_text: $brief_text
+
+Return JSON with keys:
+title_tag
+meta_description
+slug
+h1
+excerpt
+body_html
+faq
+schema
+image_prompt
+
+Rules
+1. Use valid HTML only.
+2. Make the article useful and specific.
+3. Include one section explaining how DEEMERGE fits.
+4. No fluff and no keyword stuffing.

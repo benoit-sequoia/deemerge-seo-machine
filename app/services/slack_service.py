@@ -1,14 +1,23 @@
 from __future__ import annotations
+
 import requests
-from ..config import Settings
+
+from app.config import Settings
 
 
 class SlackService:
     def __init__(self, settings: Settings):
-        self.settings = settings
+        self.webhook_url = settings.slack_webhook_url
 
-    def send(self, text: str) -> dict:
-        if not self.settings.slack_webhook_url:
-            return {"ok": False, "skipped": True, "reason": "missing webhook"}
-        resp = requests.post(self.settings.slack_webhook_url, json={"text": text}, timeout=20)
-        return {"ok": resp.ok, "status_code": resp.status_code, "text": resp.text[:500]}
+    @property
+    def enabled(self) -> bool:
+        return bool(self.webhook_url)
+
+    def send(self, text: str) -> None:
+        if not self.webhook_url:
+            return
+        response = requests.post(self.webhook_url, json={"text": text}, timeout=20)
+        response.raise_for_status()
+
+    def send_message(self, text: str) -> None:
+        self.send(text)

@@ -1,95 +1,67 @@
 from __future__ import annotations
-import hashlib
-import json
+
+from typing import Any
+
 import requests
-from typing import Dict
-from ..config import Settings
+
+from app.config import Settings
 
 
 class WebflowService:
-    base_url = "https://api.webflow.com/v2"
+    BASE_URL = "https://api.webflow.com/v2"
 
     def __init__(self, settings: Settings):
-        self.settings = settings
+        self.token = settings.webflow_token
+        self.site_id = settings.webflow_site_id
+        self.collection_id = settings.webflow_collection_id
 
-    def _headers(self) -> Dict[str, str]:
+    @property
+    def enabled(self) -> bool:
+        return bool(self.token and self.collection_id)
+
+    @property
+    def headers(self) -> dict[str, str]:
+        if not self.token:
+            raise RuntimeError("WEBFLOW_TOKEN is missing")
         return {
-            "Authorization": f"Bearer {self.settings.webflow_token}",
-            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}",
             "accept": "application/json",
+            "content-type": "application/json",
         }
 
-    def collection_details(self) -> dict:
-        if not self.settings.has_webflow:
-            return {"id": self.settings.webflow_collection_id or "mock_collection", "displayName": "Mock Blog Collection", "fields": []}
-        url = f"{self.base_url}/collections/{self.settings.webflow_collection_id}"
-        resp = requests.get(url, headers=self._headers(), timeout=30)
-        resp.raise_for_status()
-        return resp.json()
+    def _request(self, method: str, path: str, *, json_payload: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = requests.request(method, f"{self.BASE_URL}{path}", headers=self.headers, json=json_payload, params=params, timeout=60)
+        response.raise_for_status()
+        if response.text:
+            return response.json()
+        return {}
 
-    def list_items(self, limit: int = 100) -> list[dict]:
-        if not self.settings.has_webflow:
-            return [
-                {"id": "mock1", "fieldData": {"name": "Best Unified Inbox Apps", "slug": "best-unified-inbox-apps-2025"}},
-                {"id": "mock2", "fieldData": {"name": "Integrate Gmail and Slack", "slug": "integrate-gmail-and-slack"}},
-                {"id": "mock3", "fieldData": {"name": "Front Alternatives", "slug": "front-app-alternatives"}},
-                {"id": "mock4", "fieldData": {"name": "Shared Inbox Solution", "slug": "best-shared-inbox-solution-for-collaboration"}},
-            ]
-        url = f"{self.base_url}/collections/{self.settings.webflow_collection_id}/items"
-        resp = requests.get(url, headers=self._headers(), params={"limit": limit}, timeout=60)
-        resp.raise_for_status()
-        return resp.json().get("items", [])
+    def list_items(self, limit: int = 100, offset: int = 0) -> dict:
+        return self._request("GET", f"/collections/{self.collection_id}/items", params={"limit": limit, "offset": offset})
 
-    def find_by_slug(self, slug: str) -> dict | None:
-        for item in self.list_items(limit=100):
-            if (item.get("fieldData") or {}).get("slug") == slug:
-                return item
-        return None
+    def list_all_items(self, limit: int = 100) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            data = self.list_items(limit=limit, offset=offset)
+            batch = data.get("items", [])
+            if not batch:
+                break
+            items.extend(batch)
+            pagination = data.get("pagination", {})
+            total = pagination.get("total")
+            if total is None or len(items) >= total or len(batch) < limit:
+                break
+            offset += limit
+        return items
 
-    def build_item_payload(self, content: dict) -> dict:
-        fmap = self.settings.webflow_field_map()
-        field_data = {
-            fmap["name"]: content["name"],
-            fmap["slug"]: content["slug"],
-        }
-        if fmap.get("summary"):
-            field_data[fmap["summary"]] = content.get("summary", "")
-        if fmap.get("body"):
-            field_data[fmap["body"]] = content.get("body_html", "")
-        if fmap.get("meta_title"):
-            field_data[fmap["meta_title"]] = content.get("meta_title", "")
-        if fmap.get("meta_description"):
-            field_data[fmap["meta_description"]] = content.get("meta_description", "")
-        if fmap.get("featured_image") and content.get("featured_image_url"):
-            field_data[fmap["featured_image"]] = {"url": content["featured_image_url"], "alt": content.get("featured_image_alt", content["name"])}
-        return {"isDraft": True, "isArchived": False, "fieldData": field_data}
+    def create_staged_item(self, field_data: dict[str, Any], is_draft: bool = True, is_archived: bool = False) -> dict[str, Any]:
+        payload = {"fieldData": field_data, "isArchived": is_archived, "isDraft": is_draft}
+        return self._request("POST", f"/collections/{self.collection_id}/items/bulk", json_payload=payload, params={"skipInvalidFiles": "true"})
 
-    def upsert_staged_item(self, slug: str, content: dict) -> dict:
-        payload = self.build_item_payload(content)
-        payload_hash = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
-        if not self.settings.has_webflow:
-            existing = self.find_by_slug(slug)
-            return {"item_id": existing["id"] if existing else f"mock_{slug}", "payload_hash": payload_hash, "mock": True}
-        existing = self.find_by_slug(slug)
-        if existing:
-            item_id = existing["id"]
-            url = f"{self.base_url}/collections/{self.settings.webflow_collection_id}/items/{item_id}"
-            resp = requests.patch(url, headers=self._headers(), json=payload, timeout=60)
-            resp.raise_for_status()
-            return {"item_id": item_id, "payload_hash": payload_hash, "mock": False}
-        url = f"{self.base_url}/collections/{self.settings.webflow_collection_id}/items"
-        resp = requests.post(url, headers=self._headers(), json=payload, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        item = data.get("items", [{}])[0] if isinstance(data.get("items"), list) else data
-        return {"item_id": item.get("id"), "payload_hash": payload_hash, "mock": False}
+    def update_staged_item(self, item_id: str, field_data: dict[str, Any], is_draft: bool = True, is_archived: bool = False) -> dict[str, Any]:
+        payload = {"items": [{"id": item_id, "isArchived": is_archived, "isDraft": is_draft, "fieldData": field_data}]}
+        return self._request("PATCH", f"/collections/{self.collection_id}/items", json_payload=payload, params={"skipInvalidFiles": "true"})
 
-    def publish_items(self, item_ids: list[str]) -> dict:
-        if not item_ids:
-            return {"published": 0}
-        if not self.settings.has_webflow:
-            return {"published": len(item_ids), "mock": True}
-        url = f"{self.base_url}/collections/{self.settings.webflow_collection_id}/items/publish"
-        resp = requests.post(url, headers=self._headers(), json={"itemIds": item_ids}, timeout=60)
-        resp.raise_for_status()
-        return {"published": len(item_ids), "mock": False, "response": resp.json()}
+    def publish_items(self, item_ids: list[str]) -> dict[str, Any]:
+        return self._request("POST", f"/collections/{self.collection_id}/items/publish", json_payload={"itemIds": item_ids})

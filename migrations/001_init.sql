@@ -1,4 +1,7 @@
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
 PRAGMA foreign_keys = ON;
+PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS sites (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -6,9 +9,9 @@ CREATE TABLE IF NOT EXISTS sites (
   site_name TEXT NOT NULL,
   domain TEXT NOT NULL,
   timezone TEXT NOT NULL DEFAULT 'Asia/Singapore',
-  webflow_site_id TEXT NOT NULL,
-  webflow_collection_id TEXT NOT NULL,
-  gsc_site_url TEXT NOT NULL,
+  webflow_site_id TEXT,
+  webflow_collection_id TEXT,
+  gsc_site_url TEXT,
   status TEXT NOT NULL DEFAULT 'active',
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -340,4 +343,11 @@ CREATE TABLE IF NOT EXISTS error_log (
   error_message TEXT NOT NULL,
   raw_json TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS worker_locks (
+  worker_name TEXT PRIMARY KEY,
+  locked_until TEXT,
+  owner_id TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

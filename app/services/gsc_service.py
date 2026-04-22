@@ -1,94 +1,184 @@
 from __future__ import annotations
-import time
+
 from datetime import date, timedelta
-import jwt
+from typing import Any
+from urllib.parse import quote
+
 import requests
-from ..config import Settings
+
+from app.config import Settings
 
 
 class GSCService:
-    token_url = "https://oauth2.googleapis.com/token"
-    search_analytics_url = "https://searchconsole.googleapis.com/webmasters/v3/sites/{site}/searchAnalytics/query"
-    inspection_url = "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect"
-    sitemap_url = "https://www.googleapis.com/webmasters/v3/sites/{site}/sitemaps/{feedpath}"
+    SEARCH_BASE = "https://searchconsole.googleapis.com"
 
     def __init__(self, settings: Settings):
         self.settings = settings
 
     def _access_token(self) -> str | None:
-        info = self.settings.google_service_account_info()
-        if not info:
+        creds_json = self.settings.decode_google_service_account()
+        if not creds_json:
             return None
-        now = int(time.time())
-        payload = {
-            "iss": info["client_email"],
-            "scope": "https://www.googleapis.com/auth/webmasters",
-            "aud": self.token_url,
-            "iat": now,
-            "exp": now + 3600,
-        }
-        assertion = jwt.encode(payload, info["private_key"], algorithm="RS256")
-        resp = requests.post(self.token_url, data={"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": assertion}, timeout=30)
-        resp.raise_for_status()
-        return resp.json()["access_token"]
+        try:
+            from google.auth.transport.requests import Request
+            from google.oauth2 import service_account
+        except Exception as exc:
+            raise RuntimeError("google-auth dependencies are missing") from exc
+        creds = service_account.Credentials.from_service_account_info(
+            creds_json,
+            scopes=[
+                "https://www.googleapis.com/auth/webmasters.readonly",
+                "https://www.googleapis.com/auth/webmasters",
+            ],
+        )
+        creds.refresh(Request())
+        return creds.token
 
-    def query_page_data(self, days: int = 30) -> list[dict]:
-        if not self.settings.has_gsc:
-            return self._fallback_page_data()
+    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         token = self._access_token()
-        site = requests.utils.quote(self.settings.gsc_site_url, safe="")
-        url = self.search_analytics_url.format(site=site)
+        if not token:
+            raise RuntimeError("Search Console credentials are missing")
+        response = requests.post(
+            f"{self.SEARCH_BASE}{path}",
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=90,
+        )
+        response.raise_for_status()
+        return response.json() if response.text else {}
+
+    def query_pages(self, days: int = 28, data_state: str = "final") -> list[dict[str, Any]]:
+        if not self.settings.gsc_site_url or not self.settings.google_service_account_json_b64:
+            return self._fixture_pages(days)
         end = date.today() - timedelta(days=1)
         start = end - timedelta(days=days - 1)
-        payload = {"startDate": start.isoformat(), "endDate": end.isoformat(), "dimensions": ["page"], "rowLimit": 25000, "dataState": "all"}
-        resp = requests.post(url, headers={"Authorization": f"Bearer {token}"}, json=payload, timeout=60)
-        resp.raise_for_status()
-        return [{"page_url": row["keys"][0], "clicks": row.get("clicks", 0), "impressions": row.get("impressions", 0), "ctr": row.get("ctr", 0), "position": row.get("position", 0)} for row in resp.json().get("rows", [])]
+        property_url = quote(self.settings.gsc_site_url, safe="")
+        data = self._post(
+            f"/webmasters/v3/sites/{property_url}/searchAnalytics/query",
+            {
+                "startDate": start.isoformat(),
+                "endDate": end.isoformat(),
+                "dimensions": ["page"],
+                "rowLimit": 25000,
+                "dataState": data_state,
+            },
+        )
+        rows = []
+        for row in data.get("rows", []):
+            keys = row.get("keys", [])
+            if not keys:
+                continue
+            rows.append(
+                {
+                    "date_start": start.isoformat(),
+                    "date_end": end.isoformat(),
+                    "page_url": keys[0],
+                    "clicks": row.get("clicks", 0.0),
+                    "impressions": row.get("impressions", 0.0),
+                    "ctr": row.get("ctr", 0.0),
+                    "position": row.get("position", 0.0),
+                }
+            )
+        return rows or self._fixture_pages(days)
 
-    def query_query_data(self, days: int = 30) -> list[dict]:
-        if not self.settings.has_gsc:
-            return self._fallback_query_data()
-        token = self._access_token()
-        site = requests.utils.quote(self.settings.gsc_site_url, safe="")
-        url = self.search_analytics_url.format(site=site)
+    def query_queries(self, days: int = 28, data_state: str = "final") -> list[dict[str, Any]]:
+        if not self.settings.gsc_site_url or not self.settings.google_service_account_json_b64:
+            return self._fixture_queries(days)
         end = date.today() - timedelta(days=1)
         start = end - timedelta(days=days - 1)
-        payload = {"startDate": start.isoformat(), "endDate": end.isoformat(), "dimensions": ["query", "page"], "rowLimit": 25000, "dataState": "all"}
-        resp = requests.post(url, headers={"Authorization": f"Bearer {token}"}, json=payload, timeout=60)
-        resp.raise_for_status()
-        return [{"query": row["keys"][0], "page_url": row["keys"][1], "clicks": row.get("clicks", 0), "impressions": row.get("impressions", 0), "ctr": row.get("ctr", 0), "position": row.get("position", 0)} for row in resp.json().get("rows", [])]
+        property_url = quote(self.settings.gsc_site_url, safe="")
+        data = self._post(
+            f"/webmasters/v3/sites/{property_url}/searchAnalytics/query",
+            {
+                "startDate": start.isoformat(),
+                "endDate": end.isoformat(),
+                "dimensions": ["page", "query"],
+                "rowLimit": 25000,
+                "dataState": data_state,
+            },
+        )
+        rows = []
+        for row in data.get("rows", []):
+            keys = row.get("keys", [])
+            if len(keys) < 2:
+                continue
+            rows.append(
+                {
+                    "date_start": start.isoformat(),
+                    "date_end": end.isoformat(),
+                    "page_url": keys[0],
+                    "query": keys[1],
+                    "clicks": row.get("clicks", 0.0),
+                    "impressions": row.get("impressions", 0.0),
+                    "ctr": row.get("ctr", 0.0),
+                    "position": row.get("position", 0.0),
+                }
+            )
+        return rows or self._fixture_queries(days)
 
-    def inspect_url(self, page_url: str) -> dict:
-        if not self.settings.has_gsc:
-            return {"coverage_state": "Submitted and indexed", "indexing_state": "INDEXING_ALLOWED", "last_crawl_time": None}
-        token = self._access_token()
-        resp = requests.post(self.inspection_url, headers={"Authorization": f"Bearer {token}"}, json={"inspectionUrl": page_url, "siteUrl": self.settings.gsc_site_url}, timeout=60)
-        resp.raise_for_status()
-        return resp.json()
+    def inspect_url(self, inspection_url: str) -> dict[str, Any]:
+        if not self.settings.gsc_site_url or not self.settings.google_service_account_json_b64:
+            return {
+                "inspectionResult": {
+                    "indexStatusResult": {
+                        "coverageState": "Submitted and indexed",
+                        "indexingState": "INDEXING_ALLOWED",
+                        "lastCrawlTime": date.today().isoformat(),
+                        "googleCanonical": inspection_url,
+                    }
+                }
+            }
+        return self._post(
+            "/v1/urlInspection/index:inspect",
+            {"inspectionUrl": inspection_url, "siteUrl": self.settings.gsc_site_url},
+        )
 
-    def submit_sitemap(self, sitemap_url: str) -> dict:
-        if not self.settings.has_gsc:
-            return {"ok": True, "mock": True}
-        token = self._access_token()
-        site = requests.utils.quote(self.settings.gsc_site_url, safe="")
-        feedpath = requests.utils.quote(sitemap_url, safe="")
-        url = self.sitemap_url.format(site=site, feedpath=feedpath)
-        resp = requests.put(url, headers={"Authorization": f"Bearer {token}"}, timeout=60)
-        return {"ok": resp.ok, "status_code": resp.status_code}
-
-    def _fallback_page_data(self) -> list[dict]:
+    def _fixture_pages(self, days: int) -> list[dict[str, Any]]:
+        end = date.today() - timedelta(days=1)
+        start = end - timedelta(days=days - 1)
         return [
-            {"page_url": f"{self.settings.blog_base_url}/best-unified-inbox-apps-2025", "clicks": 6, "impressions": 1805, "ctr": 0.0033, "position": 29.1},
-            {"page_url": f"{self.settings.blog_base_url}/integrate-gmail-and-slack", "clicks": 4, "impressions": 1107, "ctr": 0.0036, "position": 24.0},
-            {"page_url": f"{self.settings.blog_base_url}/best-shared-inbox-solution-for-collaboration", "clicks": 0, "impressions": 939, "ctr": 0.0, "position": 31.2},
-            {"page_url": f"{self.settings.blog_base_url}/front-app-alternatives", "clicks": 0, "impressions": 739, "ctr": 0.0, "position": 33.7},
+            {
+                "date_start": start.isoformat(),
+                "date_end": end.isoformat(),
+                "page_url": f"{self.settings.blog_base_url}/best-unified-inbox-apps-in-2025",
+                "clicks": 6,
+                "impressions": 1805,
+                "ctr": 0.003324,
+                "position": 33.4,
+            },
+            {
+                "date_start": start.isoformat(),
+                "date_end": end.isoformat(),
+                "page_url": f"{self.settings.blog_base_url}/integrate-gmail-and-slack",
+                "clicks": 4,
+                "impressions": 1107,
+                "ctr": 0.00361,
+                "position": 29.6,
+            },
         ]
 
-    def _fallback_query_data(self) -> list[dict]:
+    def _fixture_queries(self, days: int) -> list[dict[str, Any]]:
+        end = date.today() - timedelta(days=1)
+        start = end - timedelta(days=days - 1)
         return [
-            {"query": "best unified inbox apps", "page_url": f"{self.settings.blog_base_url}/best-unified-inbox-apps-2025", "clicks": 6, "impressions": 1805, "ctr": 0.0033, "position": 29.1},
-            {"query": "integrate gmail and slack", "page_url": f"{self.settings.blog_base_url}/integrate-gmail-and-slack", "clicks": 4, "impressions": 1107, "ctr": 0.0036, "position": 24.0},
-            {"query": "shared inbox solution", "page_url": f"{self.settings.blog_base_url}/best-shared-inbox-solution-for-collaboration", "clicks": 0, "impressions": 939, "ctr": 0.0, "position": 31.2},
-            {"query": "front alternatives", "page_url": f"{self.settings.blog_base_url}/front-app-alternatives", "clicks": 0, "impressions": 739, "ctr": 0.0, "position": 33.7},
-            {"query": "deemerge", "page_url": f"{self.settings.deemerge_base_url}/", "clicks": 40, "impressions": 92, "ctr": 0.43, "position": 1.2},
+            {
+                "date_start": start.isoformat(),
+                "date_end": end.isoformat(),
+                "query": "unified inbox",
+                "page_url": f"{self.settings.blog_base_url}/best-unified-inbox-apps-in-2025",
+                "clicks": 0,
+                "impressions": 142,
+                "ctr": 0.0,
+                "position": 33.4,
+            },
+            {
+                "date_start": start.isoformat(),
+                "date_end": end.isoformat(),
+                "query": "gmail slack integration",
+                "page_url": f"{self.settings.blog_base_url}/integrate-gmail-and-slack",
+                "clicks": 1,
+                "impressions": 71,
+                "ctr": 0.014,
+                "position": 29.6,
+            },
         ]
