@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from app.config import load_settings
 from app.db import Database
@@ -16,9 +15,11 @@ from app.workers.gsc_inspect_recent import run as gsc_inspect_recent_run
 from app.workers.image_generate import run as image_generate_run
 from app.workers.import_existing_blog import run as import_existing_blog_run
 from app.workers.init_db import run as init_db_run
+from app.workers.inspect_webflow_collection import run as inspect_webflow_collection_run
 from app.workers.keyword_intake import run as keyword_intake_run
 from app.workers.link_resolve import run as link_resolve_run
 from app.workers.plan_publish import run as plan_publish_run
+from app.workers.preflight_check import run as preflight_check_run
 from app.workers.publish_due import run as publish_due_run
 from app.workers.queue_health import run as queue_health_run
 from app.workers.recovery_brief import run as recovery_brief_run
@@ -36,6 +37,8 @@ logger = setup_logger()
 COMMANDS = {
     "init_db": init_db_run,
     "seed_base": seed_base_run,
+    "preflight_check": preflight_check_run,
+    "inspect_webflow_collection": inspect_webflow_collection_run,
     "import_existing_blog": import_existing_blog_run,
     "gsc_collect": gsc_collect_run,
     "gsc_inspect_recent": gsc_inspect_recent_run,

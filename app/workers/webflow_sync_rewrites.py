@@ -1,69 +1,72 @@
 from __future__ import annotations
 
-import hashlib
 import json
+from datetime import datetime, timezone
 
 from app.services.webflow_service import WebflowService
 from app.workers._common import ensure_run_log, finish_run_log
 
 
-def _payload_hash(payload: dict) -> str:
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+def _field_data_from_version(page, version, field_map: dict[str, str]) -> dict:
+    now_iso = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return {
+        field_map["name"]: version["h1"] or page["title_current"],
+        field_map["slug"]: page["slug"],
+        field_map["summary"]: version["meta_description"] or version["h1"] or page["title_current"],
+        field_map["body"]: version["body_html"] or "",
+        field_map["seo_title"]: version["title_tag"] or page["title_current"],
+        field_map["seo_description"]: version["meta_description"] or page["title_current"],
+        field_map["published_date"]: now_iso,
+    }
 
 
 def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, "webflow_sync_rewrites")
+    field_map = settings.webflow_field_map()
     service = WebflowService(settings)
     rows = db.fetchall(
         """
-        SELECT rq.id AS queue_id, cp.webflow_item_id AS existing_item_id, pv.id AS version_id, cp.slug, pv.title_tag, pv.h1,
-               pv.meta_description, pv.body_html
-        FROM recovery_queue rq
-        JOIN content_pages cp ON cp.id = rq.page_id
-        JOIN page_versions pv ON pv.page_id = rq.page_id AND pv.id = (SELECT MAX(id) FROM page_versions WHERE page_id = rq.page_id)
-        LEFT JOIN webflow_items wi ON wi.page_type='rewrite' AND wi.source_id=pv.id
-        WHERE rq.status='ready' AND wi.id IS NULL
-        ORDER BY rq.priority DESC, rq.queued_at ASC
+        SELECT pv.id AS version_id, cp.id AS page_id, cp.slug, cp.title_current, cp.webflow_item_id, pv.title_tag, pv.meta_description, pv.h1, pv.body_html
+        FROM page_versions pv
+        JOIN content_pages cp ON cp.id = pv.page_id
+        JOIN recovery_queue rq ON rq.page_id = cp.id
+        WHERE pv.source_type='rewrite' AND rq.status='ready'
+        ORDER BY pv.id DESC
         LIMIT ?
         """,
         [limit],
     )
     processed = 0
+    errors = 0
     for row in rows:
-        field_data = {
-            "name": row["h1"],
-            "slug": row["slug"],
-            "post-body": row["body_html"],
-            "seo-title": row["title_tag"],
-            "seo-description": row["meta_description"],
-        }
-        item_id = row["existing_item_id"]
-        sync_status = "staged"
-        if service.enabled and item_id:
-            try:
-                service.update_staged_item(item_id, field_data, is_draft=True)
-            except Exception as exc:
-                logger.warning("Webflow rewrite sync fallback used for version %s: %s", row["version_id"], exc)
-                sync_status = "local_only"
-        else:
-            sync_status = "local_only"
-        db.execute(
-            """
-            INSERT INTO webflow_items(page_type, source_id, collection_id, item_id, slug, is_draft, sync_status, last_sync_at, payload_hash)
-            VALUES ('rewrite', ?, ?, ?, ?, 1, ?, CURRENT_TIMESTAMP, ?)
-            ON CONFLICT(page_type, source_id) DO UPDATE SET
-              item_id=excluded.item_id,
-              slug=excluded.slug,
-              is_draft=excluded.is_draft,
-              sync_status=excluded.sync_status,
-              last_sync_at=CURRENT_TIMESTAMP,
-              payload_hash=excluded.payload_hash,
-              updated_at=CURRENT_TIMESTAMP
-            """,
-            [row["version_id"], settings.webflow_collection_id or "local", item_id, row["slug"], sync_status, _payload_hash(field_data)],
-        )
-        db.execute("UPDATE recovery_queue SET status='scheduled' WHERE id=?", [row["queue_id"]])
-        processed += 1
-    finish_run_log(db, run_id, "success", items_processed=processed)
-    logger.info("Synced %s rewrites", processed)
+        try:
+            item_id = row["webflow_item_id"]
+            if settings.webflow_token and not item_id:
+                existing = service.find_item_by_slug(row["slug"])
+                item_id = existing["id"] if existing else None
+            if not item_id:
+                logger.warning("Skipping rewrite sync for %s because no existing Webflow item was found", row["slug"])
+                continue
+            field_data = _field_data_from_version(row, row, field_map)
+            service.update_item(item_id, field_data, is_draft=True)
+            db.execute(
+                """
+                INSERT INTO webflow_items(page_type, source_id, collection_id, item_id, slug, is_draft, sync_status, payload_hash)
+                VALUES ('rewrite', ?, ?, ?, ?, 1, 'synced', ?)
+                ON CONFLICT(page_type, source_id) DO UPDATE SET
+                  item_id=excluded.item_id,
+                  slug=excluded.slug,
+                  is_draft=1,
+                  sync_status='synced',
+                  last_sync_at=CURRENT_TIMESTAMP,
+                  payload_hash=excluded.payload_hash,
+                  updated_at=CURRENT_TIMESTAMP
+                """,
+                [row["version_id"], settings.webflow_collection_id or '', item_id, row["slug"], json.dumps(field_data, sort_keys=True)],
+            )
+            processed += 1
+        except Exception as exc:
+            errors += 1
+            logger.exception("webflow_sync_rewrites failed for page %s: %s", row["page_id"], exc)
+    finish_run_log(db, run_id, "success" if errors == 0 else "warning", items_processed=processed, error_count=errors)
     return 0

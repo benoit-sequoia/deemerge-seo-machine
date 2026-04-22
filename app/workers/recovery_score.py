@@ -59,9 +59,6 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     max_impressions = max(float(r["impressions_28d"]) for r in rows)
     processed = 0
     for row in rows[: max(limit, len(rows))]:
-        active_queue = db.fetchone("SELECT id FROM recovery_queue WHERE page_id=? AND status IN ('queued','briefed','drafted','ready','scheduled') LIMIT 1", [row['page_id']])
-        if active_queue:
-            continue
         queries = db.fetchall(
             "SELECT query, SUM(impressions) AS impressions FROM gsc_query_daily WHERE page_url=? GROUP BY query ORDER BY impressions DESC LIMIT 10",
             [row["page_url"]],

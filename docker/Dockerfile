@@ -12,7 +12,9 @@ COPY app /app/app
 COPY migrations /app/migrations
 COPY prompts /app/prompts
 COPY scripts /app/scripts
+COPY config /app/config
+COPY docs /app/docs
 
-RUN mkdir -p /app/config /data /logs /backups && chmod +x /app/scripts/hostinger_first_boot.sh
+RUN mkdir -p /data /logs /backups && chmod +x /app/scripts/hostinger_first_boot.sh
 
 CMD ["sleep", "infinity"]

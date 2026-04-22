@@ -1,108 +1,90 @@
 from __future__ import annotations
 
 import json
+import re
 
 from app.services.anthropic_service import AnthropicService
-from app.utils import extract_json_object, load_prompt, render_prompt, slugify
 from app.workers._common import ensure_run_log, finish_run_log
 
 
-PROMPT_NAME = "article_write.txt"
+def _slugify(text: str) -> str:
+    text = re.sub(r"[^a-zA-Z0-9\s-]", "", text).strip().lower()
+    text = re.sub(r"[\s_-]+", "-", text)
+    return text[:120].strip("-")
 
 
-def _fallback_article(keyword: str, secondaries: list[str], title_options: list[str]) -> dict:
-    title = title_options[0] if title_options else keyword.title()
-    body = (
-        f"<p>{keyword.title()} becomes harder as teams grow and information spreads across inboxes and chat.</p>"
-        f"<h2>What teams struggle with</h2><p>Teams often miss context, duplicate replies, and lose accountability when communication is scattered.</p>"
-        f"<h2>What to look for</h2><p>Look for clear ownership, visibility, and better coordination across email and chat.</p>"
-        f"<h2>How DEEMERGE helps</h2><p>DEEMERGE helps teams group related communication, summarize context, and act faster on what matters.</p>"
-    )
-    return {
-        "title_tag": title,
-        "meta_description": f"Learn about {keyword} and see how DEEMERGE helps teams reduce confusion and move faster.",
-        "slug": slugify(keyword),
-        "h1": title,
-        "excerpt": f"A practical guide to {keyword} for teams.",
-        "body_html": body,
-        "faq": [
-            {"q": f"What is {keyword}?", "a": f"It refers to workflows and tools around {keyword}."},
-            {"q": "How does DEEMERGE fit?", "a": "DEEMERGE helps teams centralize context and act faster."},
-        ],
-        "schema": {"type": "BlogPosting", "keywords": [keyword, *secondaries[:5]]},
-        "image_prompt": f"Editorial SaaS illustration about {keyword}, inboxes, collaboration, modern software UI", 
-    }
+def _fallback_html(primary: str, secondaries: list[str]) -> tuple[str, str, str, str]:
+    h1 = f"Best {primary.title()} Solutions for Teams in 2026"
+    title_tag = h1
+    meta = f"Compare {primary} options, understand the main workflow problems, and see how DEEMERGE helps teams move faster with less context switching."
+    excerpt = f"Understand {primary}, the common workflow problems around it, and where DEEMERGE fits."
+    body = f"""
+<h2>What {primary} means for teams</h2>
+<p>{primary.title()} is usually not just a tool question. It is a workflow question about visibility, accountability, and execution across multiple conversations.</p>
+<h2>Main problems teams face</h2>
+<p>Teams usually lose time because information is split between email, chat, and follow ups. That is where delays, duplicate work, and missed replies happen.</p>
+<h2>How DEEMERGE solves this in practice</h2>
+<p>DEEMERGE helps by pulling scattered conversations into structured topics, showing what matters, and reducing the time needed to understand context and act.</p>
+<h2>Related terms</h2>
+<p>{', '.join(secondaries[:8])}</p>
+""".strip()
+    return h1, title_tag, meta, excerpt, body
 
 
 def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, "article_write")
-    anthropic = AnthropicService(settings)
-    template = load_prompt(PROMPT_NAME)
     rows = db.fetchall(
         """
-        SELECT agq.id AS queue_id, ab.primary_keyword, ab.secondary_keywords_json, ab.title_options_json, ab.outline_json, ab.cta_angle, ab.brief_text
-        FROM article_generation_queue agq
-        JOIN article_briefs ab ON ab.queue_id = agq.id
-        LEFT JOIN article_drafts ad ON ad.queue_id = agq.id
-        WHERE agq.status='briefed' AND ad.id IS NULL
-        ORDER BY agq.priority DESC, agq.queued_at ASC
+        SELECT ab.queue_id, ab.primary_keyword, ab.secondary_keywords_json, ab.article_angle, ab.title_options_json
+        FROM article_briefs ab
+        JOIN article_generation_queue q ON q.id = ab.queue_id
+        LEFT JOIN article_drafts ad ON ad.queue_id = ab.queue_id
+        WHERE ad.id IS NULL AND q.status IN ('queued','briefing')
+        ORDER BY q.priority DESC, q.id ASC
         LIMIT ?
         """,
         [limit],
     )
     processed = 0
+    anthropic = AnthropicService(settings) if settings.anthropic_api_key else None
     for row in rows:
-        secondaries = json.loads(row["secondary_keywords_json"] or "[]")
-        title_options = json.loads(row["title_options_json"] or "[]")
-        draft = _fallback_article(str(row["primary_keyword"]), secondaries, title_options)
-        if anthropic.enabled:
-            prompt = render_prompt(
-                template,
-                {
-                    "primary_keyword": row["primary_keyword"],
-                    "secondary_keywords": secondaries,
-                    "title_options": title_options,
-                    "outline": json.loads(row["outline_json"] or "[]"),
-                    "cta_angle": row["cta_angle"],
-                    "brief_text": row["brief_text"],
-                },
+        secondary = json.loads(row["secondary_keywords_json"] or "[]")
+        if anthropic:
+            # Keep prompt simple for first runnable version.
+            prompt = (
+                f"Write a concise SEO blog article in HTML. Primary keyword: {row['primary_keyword']}. "
+                f"Secondary keywords: {', '.join(secondary[:10])}. "
+                f"Angle: {row['article_angle']}. Include a section called 'How DEEMERGE solves this in practice'."
             )
             try:
-                parsed = extract_json_object(anthropic.generate(prompt, max_tokens=3000))
-                if parsed:
-                    draft.update({
-                        "title_tag": parsed.get("title_tag") or draft["title_tag"],
-                        "meta_description": parsed.get("meta_description") or draft["meta_description"],
-                        "slug": slugify(parsed.get("slug") or draft["slug"]),
-                        "h1": parsed.get("h1") or draft["h1"],
-                        "excerpt": parsed.get("excerpt") or draft["excerpt"],
-                        "body_html": parsed.get("body_html") or draft["body_html"],
-                        "faq": parsed.get("faq") or draft["faq"],
-                        "schema": parsed.get("schema") or draft["schema"],
-                        "image_prompt": parsed.get("image_prompt") or draft["image_prompt"],
-                    })
+                body = anthropic.generate(prompt, fast=True, max_tokens=1800)
+                h1 = json.loads(row["title_options_json"] or "[]")[0]
+                title_tag = h1
+                meta = f"Learn about {row['primary_keyword']} and how DEEMERGE fits this workflow."
+                excerpt = f"Guide to {row['primary_keyword']} for teams."
             except Exception as exc:
-                logger.warning("Anthropic article write fallback used for queue %s: %s", row["queue_id"], exc)
+                logger.warning("Anthropic generation failed, using fallback for %s: %s", row["primary_keyword"], exc)
+                h1, title_tag, meta, excerpt, body = _fallback_html(row["primary_keyword"], secondary)
+        else:
+            h1, title_tag, meta, excerpt, body = _fallback_html(row["primary_keyword"], secondary)
+        slug = _slugify(row["primary_keyword"])
         db.execute(
             """
             INSERT INTO article_drafts(queue_id, title_tag, meta_description, slug, h1, excerpt, body_html, faq_json, schema_json, image_prompt, quality_score, validation_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, '[]', '{}', ?, 0, '{}')
+            ON CONFLICT(queue_id) DO UPDATE SET
+              title_tag=excluded.title_tag,
+              meta_description=excluded.meta_description,
+              slug=excluded.slug,
+              h1=excluded.h1,
+              excerpt=excluded.excerpt,
+              body_html=excluded.body_html,
+              image_prompt=excluded.image_prompt,
+              created_at=CURRENT_TIMESTAMP
             """,
-            [
-                row["queue_id"],
-                draft["title_tag"],
-                draft["meta_description"],
-                draft["slug"],
-                draft["h1"],
-                draft["excerpt"],
-                draft["body_html"],
-                json.dumps(draft["faq"]),
-                json.dumps(draft["schema"]),
-                draft["image_prompt"],
-                json.dumps({"secondary_keywords": secondaries}),
-            ],
+            [row["queue_id"], title_tag, meta, slug, h1, excerpt, body, f"Editorial image for {row['primary_keyword']}"]
         )
-        db.execute("UPDATE article_generation_queue SET status='drafted', attempt_no=attempt_no+1 WHERE id=?", [row["queue_id"]])
+        db.execute("UPDATE article_generation_queue SET status='drafted' WHERE id=?", [row["queue_id"]])
         processed += 1
     finish_run_log(db, run_id, "success", items_processed=processed)
     logger.info("Created %s article drafts", processed)

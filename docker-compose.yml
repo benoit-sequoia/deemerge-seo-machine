@@ -4,10 +4,36 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    environment:
+      APP_ENV: ${APP_ENV}
+      APP_TIMEZONE: ${APP_TIMEZONE}
+      SQLITE_PATH: ${SQLITE_PATH}
+      DEEMERGE_BASE_URL: ${DEEMERGE_BASE_URL}
+      BLOG_BASE_URL: ${BLOG_BASE_URL}
+      MAX_NEW_ARTICLES_PER_WEEK: ${MAX_NEW_ARTICLES_PER_WEEK}
+      MAX_REWRITES_PER_WEEK: ${MAX_REWRITES_PER_WEEK}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL_MAIN: ${ANTHROPIC_MODEL_MAIN}
+      ANTHROPIC_MODEL_FAST: ${ANTHROPIC_MODEL_FAST}
+      WEBFLOW_TOKEN: ${WEBFLOW_TOKEN}
+      WEBFLOW_SITE_ID: ${WEBFLOW_SITE_ID}
+      WEBFLOW_COLLECTION_ID: ${WEBFLOW_COLLECTION_ID}
+      WEBFLOW_FIELD_MAP_JSON: ${WEBFLOW_FIELD_MAP_JSON}
+      GSC_SITE_URL: ${GSC_SITE_URL}
+      GOOGLE_SERVICE_ACCOUNT_JSON_B64: ${GOOGLE_SERVICE_ACCOUNT_JSON_B64}
+      DATAFORSEO_LOGIN: ${DATAFORSEO_LOGIN}
+      DATAFORSEO_PASSWORD: ${DATAFORSEO_PASSWORD}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASS: ${SMTP_PASS}
+      ALERT_EMAIL_TO: ${ALERT_EMAIL_TO}
     volumes:
       - deemerge_seo_data:/data
       - deemerge_seo_logs:/logs
       - deemerge_seo_backups:/backups
+    working_dir: /app
     restart: unless-stopped
     command: ["sleep", "infinity"]
 

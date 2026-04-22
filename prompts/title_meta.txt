@@ -1,2 +1,1 @@
-Return strict JSON only with keys title_tag and meta_description.
-Write concise metadata that matches search intent.
+title_meta prompt placeholder

@@ -6,7 +6,7 @@ from app.workers._common import ensure_run_log, finish_run_log
 
 def infer_cluster_from_slug(slug: str) -> str | None:
     value = slug.lower()
-    if any(x in value for x in ["shared-inbox", "team-inbox", "mailbox", "unified-inbox"]):
+    if any(x in value for x in ["shared-inbox", "team-inbox", "mailbox", "collaborative-inbox"]):
         return "shared_inbox"
     if any(x in value for x in ["gmail", "slack", "outlook"]):
         return "gmail_slack_coordination"
@@ -25,23 +25,23 @@ def run(*, db, settings, logger, limit: int = 100) -> int:
     site_id = int(site_row["id"])
 
     items = []
-    service = WebflowService(settings)
-    if service.enabled:
+    if settings.webflow_token and settings.webflow_collection_id:
+        service = WebflowService(settings)
         try:
-            items = service.list_all_items(limit=min(limit, 100))
+            data = service.list_items(limit=limit)
+            items = data.get("items", [])
         except Exception as exc:
             logger.warning("Webflow import failed, using fallback fixtures: %s", exc)
 
     if not items:
         items = [
-            {"id": "fixture_1", "fieldData": {"slug": "best-unified-inbox-apps-in-2025", "name": "The 7 Best Unified Inbox Apps in 2025"}},
-            {"id": "fixture_2", "fieldData": {"slug": "spike-email-alternatives", "name": "Spike Email Alternatives"}},
-            {"id": "fixture_3", "fieldData": {"slug": "integrate-gmail-and-slack", "name": "Integrate Gmail and Slack"}},
-            {"id": "fixture_4", "fieldData": {"slug": "best-shared-inbox-solution-for-collaboration", "name": "Best Shared Inbox Solution for Collaboration"}},
+            {"fieldData": {"slug": "best-unified-inbox-apps-in-2025", "name": "The 7 Best Unified Inbox Apps in 2025"}},
+            {"fieldData": {"slug": "spike-email-alternatives", "name": "Spike Email Alternatives"}},
+            {"fieldData": {"slug": "integrate-gmail-and-slack", "name": "Integrate Gmail and Slack"}},
+            {"fieldData": {"slug": "best-shared-inbox-solution-for-collaboration", "name": "Best Shared Inbox Solution for Collaboration"}},
         ]
 
     processed = 0
-    base_blog = settings.blog_base_url.rstrip("/")
     for item in items[:limit]:
         field_data = item.get("fieldData", {})
         slug = field_data.get("slug")
@@ -53,7 +53,7 @@ def run(*, db, settings, logger, limit: int = 100) -> int:
         if cluster_key:
             cluster = db.fetchone("SELECT id FROM clusters WHERE cluster_key=?", [cluster_key])
             cluster_id = int(cluster["id"]) if cluster else None
-        page_url = f"{base_blog}/{slug}"
+        page_url = f"{settings.blog_base_url.rstrip('/')}/{slug}"
         db.execute(
             """
             INSERT INTO content_pages(site_id, page_url, slug, title_current, h1_current, cluster_id, page_type, status, webflow_item_id)

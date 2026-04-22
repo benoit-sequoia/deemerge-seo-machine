@@ -1,26 +1,7 @@
-# macOS
-.DS_Store
-
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-.python-version
 .venv/
-venv/
-
-# Local runtime data
-/data/*
-!/data/.gitkeep
-/logs/*
-!/logs/.gitkeep
-/backups/*
-!/backups/.gitkeep
-
-# IDE
-.vscode/
-.idea/
-
-# Build
-*.egg-info/
+__pycache__/
+*.pyc
+.DS_Store
+data/
+logs/
+backups/

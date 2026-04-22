@@ -19,35 +19,32 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     site_id = int(site_row["id"])
 
     service = GSCService(settings)
-    pages = service.query_pages(days=28, data_state="final")
-    queries = service.query_queries(days=28, data_state="final")
+    pages = service.query_pages(days=28)
+    queries = service.query_queries(days=28)
     dates = _daterange(28)
 
+    # Lightweight fixture style load until live API wiring is added.
     processed = 0
     for row in pages:
-        per_day_clicks = float(row["clicks"]) / 28.0
-        per_day_impressions = float(row["impressions"]) / 28.0
         for d in dates:
             db.execute(
                 """
                 INSERT OR REPLACE INTO gsc_page_daily(site_id, date, page_url, clicks, impressions, ctr, position, data_state)
                 VALUES (?, ?, ?, ?, ?, ?, ?, 'final')
                 """,
-                [site_id, d, row["page_url"], per_day_clicks, per_day_impressions, row["ctr"], row["position"]],
+                [site_id, d, row["page_url"], row["clicks"] / 28.0, row["impressions"] / 28.0, row["ctr"], row["position"]],
             )
             processed += 1
     for row in queries:
-        per_day_clicks = float(row["clicks"]) / 28.0
-        per_day_impressions = float(row["impressions"]) / 28.0
         for d in dates:
             db.execute(
                 """
                 INSERT OR REPLACE INTO gsc_query_daily(site_id, date, query, page_url, clicks, impressions, ctr, position, data_state)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'final')
                 """,
-                [site_id, d, row["query"], row["page_url"], per_day_clicks, per_day_impressions, row["ctr"], row["position"]],
+                [site_id, d, row["query"], row["page_url"], row["clicks"] / 28.0, row["impressions"] / 28.0, row["ctr"], row["position"]],
             )
             processed += 1
     finish_run_log(db, run_id, "success", items_processed=processed)
-    logger.info("Stored GSC rows: %s", processed)
+    logger.info("Stored GSC fixture data rows: %s", processed)
     return 0

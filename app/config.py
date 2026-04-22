@@ -4,7 +4,22 @@ import base64
 import json
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
+
+
+DEFAULT_WEBFLOW_FIELD_MAP = {
+    "name": "name",
+    "slug": "slug",
+    "summary": "post-short-details-2",
+    "excerpt": "post-short-details-2",
+    "body": "post-details",
+    "seo_title": "seo-title",
+    "seo_description": "meta-description",
+    "published_date": "post-date-time-2",
+    "featured_image": "post-image",
+    "og_image": "og-image",
+    "category": "post-category",
+}
 
 
 @dataclass(frozen=True)
@@ -22,6 +37,7 @@ class Settings:
     webflow_token: Optional[str]
     webflow_site_id: Optional[str]
     webflow_collection_id: Optional[str]
+    webflow_field_map_json: Optional[str]
     gsc_site_url: Optional[str]
     google_service_account_json_b64: Optional[str]
     dataforseo_login: Optional[str]
@@ -33,11 +49,24 @@ class Settings:
     smtp_pass: Optional[str]
     alert_email_to: Optional[str]
 
-    def decode_google_service_account(self) -> Optional[dict]:
+    def decode_google_service_account(self) -> Optional[dict[str, Any]]:
         if not self.google_service_account_json_b64:
             return None
         decoded = base64.b64decode(self.google_service_account_json_b64).decode("utf-8")
         return json.loads(decoded)
+
+    def webflow_field_map(self) -> dict[str, str]:
+        if not self.webflow_field_map_json:
+            return dict(DEFAULT_WEBFLOW_FIELD_MAP)
+        try:
+            parsed = json.loads(self.webflow_field_map_json)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"WEBFLOW_FIELD_MAP_JSON is not valid JSON: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise RuntimeError("WEBFLOW_FIELD_MAP_JSON must decode to an object")
+        merged = dict(DEFAULT_WEBFLOW_FIELD_MAP)
+        merged.update({str(k): str(v) for k, v in parsed.items() if v not in (None, "")})
+        return merged
 
 
 def _optional(name: str) -> Optional[str]:
@@ -61,6 +90,7 @@ def load_settings() -> Settings:
         webflow_token=_optional("WEBFLOW_TOKEN"),
         webflow_site_id=_optional("WEBFLOW_SITE_ID"),
         webflow_collection_id=_optional("WEBFLOW_COLLECTION_ID"),
+        webflow_field_map_json=_optional("WEBFLOW_FIELD_MAP_JSON"),
         gsc_site_url=_optional("GSC_SITE_URL"),
         google_service_account_json_b64=_optional("GOOGLE_SERVICE_ACCOUNT_JSON_B64"),
         dataforseo_login=_optional("DATAFORSEO_LOGIN"),

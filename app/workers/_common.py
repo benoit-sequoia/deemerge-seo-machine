@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -11,13 +12,31 @@ def load_sql(*paths: str) -> str:
     root = Path(__file__).resolve().parents[2]
     sql = []
     for path in paths:
-        sql.append((root / path).read_text(encoding="utf-8"))
+        sql.append((root / path).read_text())
     return "\n\n".join(sql)
+
+
+def logs_dir() -> Path:
+    path = Path("/logs")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def write_json_log(filename: str, data: Any) -> Path:
+    path = logs_dir() / filename
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    return path
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
 def ensure_run_log(db: Database, worker_name: str) -> int:
     try:
-        return db.insert("INSERT INTO runs_log(worker_name) VALUES (?)", [worker_name])
+        db.execute("INSERT INTO runs_log(worker_name) VALUES (?)", [worker_name])
+        row = db.fetchone("SELECT last_insert_rowid() AS id")
+        return int(row["id"])
     except Exception:
         return 0
 

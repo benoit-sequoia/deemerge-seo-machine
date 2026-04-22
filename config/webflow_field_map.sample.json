@@ -1,0 +1,13 @@
+{
+  "name": "name",
+  "slug": "slug",
+  "summary": "post-short-details-2",
+  "excerpt": "post-short-details-2",
+  "body": "post-details",
+  "seo_title": "seo-title",
+  "seo_description": "meta-description",
+  "published_date": "post-date-time-2",
+  "featured_image": "post-image",
+  "og_image": "og-image",
+  "category": "post-category"
+}

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import requests
 
 from app.config import Settings
@@ -13,10 +12,6 @@ class AnthropicService:
         self.api_key = settings.anthropic_api_key
         self.model_main = settings.anthropic_model_main or "claude-sonnet-4-5"
         self.model_fast = settings.anthropic_model_fast or self.model_main
-
-    @property
-    def enabled(self) -> bool:
-        return bool(self.api_key)
 
     def generate(self, prompt: str, fast: bool = False, max_tokens: int = 2500) -> str:
         if not self.api_key:
