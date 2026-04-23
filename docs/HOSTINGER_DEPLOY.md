@@ -12,4 +12,3 @@ Then check `/logs` for:
 - `webflow_field_map_suggestion.json`
 
 Current limitation:
-- do not run `webflow_sync_articles` yet because the real DEEMERGE Webflow collection requires `og-image` and that asset upload path is not implemented in this package

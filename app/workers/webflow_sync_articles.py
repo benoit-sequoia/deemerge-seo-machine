@@ -55,7 +55,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
         JOIN article_generation_queue q ON q.id = ad.queue_id
         JOIN keyword_candidates kc ON kc.id = q.keyword_candidate_id
         LEFT JOIN webflow_items wi ON wi.page_type='article' AND wi.source_id = ad.id
-        WHERE wi.id IS NULL AND q.status IN ('drafted','validated','queued','briefing')
+        WHERE wi.id IS NULL AND q.status IN ('ready','drafted','validated','queued','briefing')
         ORDER BY ad.id ASC
         LIMIT ?
         """,
@@ -63,6 +63,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     )
     processed = 0
     errors = 0
+    logger.info("webflow_sync_articles candidates: %s", len(rows))
     for row in rows:
         try:
             existing = service.find_item_by_slug(row["slug"])
