@@ -37,6 +37,9 @@ def _position_score(position: float) -> float:
 
 def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, "recovery_score")
+    db.execute("DELETE FROM recovery_queue")
+    db.execute("DELETE FROM recovery_candidates")
+
     rows = db.fetchall(
         """
         SELECT cp.id AS page_id, cp.page_url, cp.slug, cp.cluster_id,

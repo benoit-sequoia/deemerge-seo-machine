@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from urllib.parse import urlparse
 
 from app.services.gsc_service import GSCService
 from app.workers._common import ensure_run_log, finish_run_log
@@ -51,6 +52,48 @@ def _fixture_pages(db, settings, site_id: int) -> list[dict]:
     return pages, queries
 
 
+
+
+def _slug_from_url(url: str) -> str | None:
+    try:
+        path = urlparse(url).path.rstrip('/')
+    except Exception:
+        return None
+    if not path or path == '/':
+        return None
+    slug = path.split('/')[-1].strip()
+    return slug or None
+
+
+def _canonical_page_map(db) -> dict[str, str]:
+    rows = db.fetchall("SELECT slug, page_url FROM content_pages")
+    return {str(r['slug']).strip(): str(r['page_url']).rstrip('/') for r in rows if r['slug'] and r['page_url']}
+
+
+def _canonicalize_rows(db, pages: list[dict], queries: list[dict]) -> tuple[list[dict], list[dict]]:
+    slug_map = _canonical_page_map(db)
+    if not slug_map:
+        return pages, queries
+
+    def canon(url: str) -> str:
+        url = str(url).rstrip('/')
+        slug = _slug_from_url(url)
+        return slug_map.get(slug, url)
+
+    new_pages = []
+    for row in pages:
+        r = dict(row)
+        r['page_url'] = canon(r['page_url'])
+        new_pages.append(r)
+
+    new_queries = []
+    for row in queries:
+        r = dict(row)
+        r['page_url'] = canon(r['page_url'])
+        new_queries.append(r)
+
+    return new_pages, new_queries
+
 def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, 'gsc_collect')
     site_row = db.fetchone("SELECT id FROM sites WHERE site_key='deemerge'")
@@ -70,6 +113,8 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     except Exception as exc:
         logger.warning('Falling back to fixture-style GSC data: %s', exc)
         pages, queries = _fixture_pages(db, settings, site_id)
+
+    pages, queries = _canonicalize_rows(db, pages, queries)
 
     dates = _daterange(28)
 
