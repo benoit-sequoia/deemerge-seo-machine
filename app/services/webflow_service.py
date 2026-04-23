@@ -49,12 +49,32 @@ class WebflowService:
             raise RuntimeError("WEBFLOW_COLLECTION_ID is missing")
         return self._request("GET", f"/collections/{self.collection_id}/items", params={"limit": limit})
 
+    def get_item(self, item_id: str) -> dict[str, Any]:
+        if not self.collection_id:
+            raise RuntimeError("WEBFLOW_COLLECTION_ID is missing")
+        return self._request("GET", f"/collections/{self.collection_id}/items/{item_id}")
+
     def find_item_by_slug(self, slug: str, limit: int = 100) -> Optional[dict[str, Any]]:
         data = self.list_items(limit=limit)
         for item in data.get("items", []):
             field_data = item.get("fieldData", {})
             if field_data.get("slug") == slug:
                 return item
+        return None
+
+    def find_fallback_image_field_value(self, *field_slugs: str, limit: int = 100) -> Optional[dict[str, Any]]:
+        data = self.list_items(limit=limit)
+        for item in data.get("items", []):
+            field_data = item.get("fieldData", {})
+            for slug in field_slugs:
+                value = field_data.get(slug)
+                if isinstance(value, dict) and value.get("url"):
+                    out = {"url": value.get("url")}
+                    if value.get("alt") is not None:
+                        out["alt"] = value.get("alt")
+                    if value.get("fileId"):
+                        out["fileId"] = value.get("fileId")
+                    return out
         return None
 
     def create_item(self, field_data: dict[str, Any], *, is_draft: bool = True) -> dict[str, Any]:
