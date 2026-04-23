@@ -28,3 +28,6 @@ That will create these files in `/logs`:
 Do not run `webflow_sync_articles` yet.
 
 You can run `webflow_sync_rewrites` later for existing articles after first boot if the imported pages have matching Webflow item ids.
+
+
+V3 fixes: live Search Console support when Google credentials are valid, URL-matched fixture fallback, HTML fragment cleanup for Anthropic output, stricter draft validation.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 
+from app.html_tools import html_fragment_only
 from app.services.anthropic_service import AnthropicService
 from app.workers._common import ensure_run_log, finish_run_log
 
@@ -22,7 +23,7 @@ def _fallback(page_title: str, slug: str) -> tuple[str, str, str, str]:
 
 
 def run(*, db, settings, logger, limit: int = 10) -> int:
-    run_id = ensure_run_log(db, "recovery_rewrite")
+    run_id = ensure_run_log(db, 'recovery_rewrite')
     anthropic = AnthropicService(settings) if settings.anthropic_api_key else None
     rows = db.fetchall(
         """
@@ -39,28 +40,37 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     processed = 0
     for row in rows:
         if anthropic:
-            prompt = f"Rewrite the article '{row['title_current']}' for better SEO intent match and clearer conversion to DEEMERGE. Output HTML only."
+            prompt = (
+                'Rewrite the article body as clean HTML fragment only. '
+                'Do not return markdown fences. Do not return <html>, <head>, <body>, <style>, <script>, or CSS. '
+                'Use only semantic content markup. '
+                f"Article title: {row['title_current']}. "
+                "Keep the search intent tighter and include a section with the exact heading 'How DEEMERGE solves this in practice'."
+            )
             try:
-                body = anthropic.generate(prompt, fast=True, max_tokens=1400)
-                title = row["title_current"]
+                raw_body = anthropic.generate(prompt, fast=True, max_tokens=1400)
+                body = html_fragment_only(raw_body)
+                title = row['title_current']
                 meta = f"Updated guide to {row['title_current']} with a clearer DEEMERGE angle."
-                h1 = row["title_current"]
+                h1 = row['title_current']
+                if not body:
+                    raise RuntimeError('Empty body after HTML cleanup')
             except Exception as exc:
-                logger.warning("Anthropic rewrite failed for %s: %s", row["slug"], exc)
-                title, meta, h1, body = _fallback(row["title_current"], row["slug"])
+                logger.warning('Anthropic rewrite failed for %s: %s', row['slug'], exc)
+                title, meta, h1, body = _fallback(row['title_current'], row['slug'])
         else:
-            title, meta, h1, body = _fallback(row["title_current"], row["slug"])
-        current = db.fetchone("SELECT COALESCE(MAX(version_no),0) AS max_version FROM page_versions WHERE page_id=?", [row["page_id"]])
-        next_version = int(current["max_version"]) + 1
+            title, meta, h1, body = _fallback(row['title_current'], row['slug'])
+        current = db.fetchone('SELECT COALESCE(MAX(version_no),0) AS max_version FROM page_versions WHERE page_id=?', [row['page_id']])
+        next_version = int(current['max_version']) + 1
         db.execute(
             """
             INSERT INTO page_versions(page_id, version_no, source_type, title_tag, meta_description, h1, body_html, notes_json)
             VALUES (?, ?, 'rewrite', ?, ?, ?, ?, ?)
             """,
-            [row["page_id"], next_version, title, meta, h1, body, json.dumps({"queue_id": row["queue_id"]})],
+            [row['page_id'], next_version, title, meta, h1, body, json.dumps({'queue_id': row['queue_id']})],
         )
-        db.execute("UPDATE recovery_queue SET status='drafted' WHERE id=?", [row["queue_id"]])
+        db.execute("UPDATE recovery_queue SET status='drafted' WHERE id=?", [row['queue_id']])
         processed += 1
-    finish_run_log(db, run_id, "success", items_processed=processed)
-    logger.info("Created %s rewrite drafts", processed)
+    finish_run_log(db, run_id, 'success', items_processed=processed)
+    logger.info('Created %s rewrite drafts', processed)
     return 0

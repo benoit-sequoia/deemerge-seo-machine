@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 
+from app.html_tools import html_fragment_only
 from app.services.anthropic_service import AnthropicService
 from app.workers._common import ensure_run_log, finish_run_log
 
@@ -32,7 +33,7 @@ def _fallback_html(primary: str, secondaries: list[str]) -> tuple[str, str, str,
 
 
 def run(*, db, settings, logger, limit: int = 10) -> int:
-    run_id = ensure_run_log(db, "article_write")
+    run_id = ensure_run_log(db, 'article_write')
     rows = db.fetchall(
         """
         SELECT ab.queue_id, ab.primary_keyword, ab.secondary_keywords_json, ab.article_angle, ab.title_options_json
@@ -48,26 +49,32 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     processed = 0
     anthropic = AnthropicService(settings) if settings.anthropic_api_key else None
     for row in rows:
-        secondary = json.loads(row["secondary_keywords_json"] or "[]")
+        secondary = json.loads(row['secondary_keywords_json'] or '[]')
         if anthropic:
-            # Keep prompt simple for first runnable version.
             prompt = (
-                f"Write a concise SEO blog article in HTML. Primary keyword: {row['primary_keyword']}. "
+                'Write only a clean HTML fragment for a blog article body. '
+                'Do not return markdown fences. Do not return <html>, <head>, <body>, <style>, <script>, or CSS. '
+                'Use only semantic article markup like <h2>, <h3>, <p>, <ul>, <ol>, <li>, <blockquote>, <strong>, and <a>. '
+                f"Primary keyword: {row['primary_keyword']}. "
                 f"Secondary keywords: {', '.join(secondary[:10])}. "
-                f"Angle: {row['article_angle']}. Include a section called 'How DEEMERGE solves this in practice'."
+                f"Angle: {row['article_angle']}. "
+                "Include a section with the exact heading 'How DEEMERGE solves this in practice'."
             )
             try:
-                body = anthropic.generate(prompt, fast=True, max_tokens=1800)
-                h1 = json.loads(row["title_options_json"] or "[]")[0]
+                raw_body = anthropic.generate(prompt, fast=True, max_tokens=1800)
+                body = html_fragment_only(raw_body)
+                h1 = json.loads(row['title_options_json'] or '[]')[0]
                 title_tag = h1
                 meta = f"Learn about {row['primary_keyword']} and how DEEMERGE fits this workflow."
                 excerpt = f"Guide to {row['primary_keyword']} for teams."
+                if not body:
+                    raise RuntimeError('Empty body after HTML cleanup')
             except Exception as exc:
-                logger.warning("Anthropic generation failed, using fallback for %s: %s", row["primary_keyword"], exc)
-                h1, title_tag, meta, excerpt, body = _fallback_html(row["primary_keyword"], secondary)
+                logger.warning('Anthropic generation failed, using fallback for %s: %s', row['primary_keyword'], exc)
+                h1, title_tag, meta, excerpt, body = _fallback_html(row['primary_keyword'], secondary)
         else:
-            h1, title_tag, meta, excerpt, body = _fallback_html(row["primary_keyword"], secondary)
-        slug = _slugify(row["primary_keyword"])
+            h1, title_tag, meta, excerpt, body = _fallback_html(row['primary_keyword'], secondary)
+        slug = _slugify(row['primary_keyword'])
         db.execute(
             """
             INSERT INTO article_drafts(queue_id, title_tag, meta_description, slug, h1, excerpt, body_html, faq_json, schema_json, image_prompt, quality_score, validation_json)
@@ -82,10 +89,10 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
               image_prompt=excluded.image_prompt,
               created_at=CURRENT_TIMESTAMP
             """,
-            [row["queue_id"], title_tag, meta, slug, h1, excerpt, body, f"Editorial image for {row['primary_keyword']}"]
+            [row['queue_id'], title_tag, meta, slug, h1, excerpt, body, f"Editorial image for {row['primary_keyword']}"]
         )
-        db.execute("UPDATE article_generation_queue SET status='drafted' WHERE id=?", [row["queue_id"]])
+        db.execute("UPDATE article_generation_queue SET status='drafted' WHERE id=?", [row['queue_id']])
         processed += 1
-    finish_run_log(db, run_id, "success", items_processed=processed)
-    logger.info("Created %s article drafts", processed)
+    finish_run_log(db, run_id, 'success', items_processed=processed)
+    logger.info('Created %s article drafts', processed)
     return 0
