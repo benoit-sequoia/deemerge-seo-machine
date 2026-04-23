@@ -5,6 +5,29 @@ import json
 from app.workers._common import ensure_run_log, finish_run_log
 
 
+def _title_options(primary: str) -> list[str]:
+    keyword = primary.strip()
+    lower = keyword.lower()
+    human = keyword.title()
+    if 'alternative' in lower:
+        return [
+            f"{human}: Better Options for Teams in 2026",
+            f"Best {human} for Teams That Need Better Workflow Visibility",
+            f"{human}: What to Choose When Teams Outgrow Basic Tools",
+        ]
+    if 'shared inbox' in lower or 'shared mailbox' in lower:
+        return [
+            f"{human}: Best Options for Teams in 2026",
+            f"{human}: How Teams Reduce Missed Replies and Duplicate Work",
+            f"{human}: What Growing Teams Should Use Instead of a Basic Shared Mailbox",
+        ]
+    return [
+        f"{human}: Best Solutions for Teams in 2026",
+        f"{human}: How Teams Solve the Workflow Problem Behind the Keyword",
+        f"{human}: What It Is, Where Teams Struggle, and What to Use",
+    ]
+
+
 def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, "article_brief")
     rows = db.fetchall(
@@ -21,20 +44,20 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     )
     processed = 0
     for row in rows:
-        secondary = json.loads(row["secondary_keywords_json"] or "[]")
+        secondary = json.loads(row["secondary_keywords_json"] or '[]')
         intent = row["intent_type"]
-        angle = f"Explain {row['primary_keyword']} clearly, then show how DEEMERGE fits for teams that manage work across email and chat."
-        title_options = [
-            f"Best {row['primary_keyword'].title()} Solutions for Teams in 2026",
-            f"{row['primary_keyword'].title()}: What It Is, How It Works, and the Best Options",
-            f"How to Improve {row['primary_keyword'].title()} for Fast Moving Teams",
-        ]
+        angle = (
+            f"Target the keyword '{row['primary_keyword']}' clearly and directly. "
+            "Explain the real workflow problem behind the query, avoid fluff, avoid unsupported stats, "
+            "and show how DEEMERGE helps teams reduce missed replies, context switching, and unclear ownership across email and chat."
+        )
+        title_options = _title_options(row['primary_keyword'])
         outline = [
-            "What the keyword means and why teams search it",
-            "Main problems and pain points",
-            "How teams handle it today",
+            "Direct introduction to the keyword and why teams search it",
+            "What breaks in the current workflow",
+            "Where basic tools fall short",
             "How DEEMERGE solves this in practice",
-            "Best practices and final recommendations",
+            "Next step with DEEMERGE",
         ]
         db.execute(
             """

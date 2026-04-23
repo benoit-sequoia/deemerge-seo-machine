@@ -1,1 +1,6 @@
-rewrite_article prompt placeholder
+Rewrite the article body as a clean HTML fragment only.
+No markdown fences. No full document HTML. No h1 in the body.
+No unsupported studies, percentages, or benchmark claims.
+Include sections titled exactly:
+- How DEEMERGE solves this in practice
+- Next step with DEEMERGE

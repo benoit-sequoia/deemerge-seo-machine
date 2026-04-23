@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from app.html_tools import has_forbidden_wrapper
+from app.html_tools import has_forbidden_wrapper, has_generic_meta, has_h1_tag, has_required_heading, has_unsupported_claim
 from app.workers._common import ensure_run_log, finish_run_log
 
 
@@ -30,13 +30,27 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
             'has_slug': bool(row['slug']),
             'mentions_deemerge': 'deemerge' in body.lower(),
             'fragment_only': not has_forbidden_wrapper(body),
+            'no_h1_in_body': not has_h1_tag(body),
+            'no_generic_meta': not has_generic_meta(row['meta_description'] or ''),
+            'no_unsupported_claims': not has_unsupported_claim(body),
+            'has_deemerge_section': has_required_heading(body, 'How DEEMERGE solves this in practice'),
+            'has_cta_section': has_required_heading(body, 'Next step with DEEMERGE'),
         }
         quality = sum(1 for value in checks.values() if value) / len(checks) * 100
         db.execute(
             'UPDATE article_drafts SET quality_score=?, validation_json=? WHERE id=?',
             [quality, json.dumps(checks), row['id']],
         )
-        next_status = 'ready' if quality >= 90 and checks['fragment_only'] else 'needs_review'
+        critical = all([
+            checks['fragment_only'],
+            checks['no_h1_in_body'],
+            checks['no_generic_meta'],
+            checks['no_unsupported_claims'],
+            checks['has_deemerge_section'],
+            checks['has_cta_section'],
+            checks['mentions_deemerge'],
+        ])
+        next_status = 'ready' if quality >= 90 and critical else 'needs_review'
         db.execute('UPDATE article_generation_queue SET status=? WHERE id=?', [next_status, row['queue_id']])
         processed += 1
     finish_run_log(db, run_id, 'success', items_processed=processed)

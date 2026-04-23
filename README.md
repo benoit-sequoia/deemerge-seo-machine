@@ -31,3 +31,6 @@ You can run `webflow_sync_rewrites` later for existing articles after first boot
 
 
 V3 fixes: live Search Console support when Google credentials are valid, URL-matched fixture fallback, HTML fragment cleanup for Anthropic output, stricter draft validation.
+
+
+V5 quality patch adds stricter meta generation, no unsupported claims, no h1 in body, mandatory DEEMERGE section, and mandatory CTA section.

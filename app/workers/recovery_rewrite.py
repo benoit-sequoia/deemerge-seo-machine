@@ -1,23 +1,38 @@
 from __future__ import annotations
 
 import json
+import re
 
-from app.html_tools import html_fragment_only
+from app.html_tools import ensure_section, sanitize_article_fragment
 from app.services.anthropic_service import AnthropicService
 from app.workers._common import ensure_run_log, finish_run_log
 
 
+def _slug_phrase(slug: str) -> str:
+    return re.sub(r'-+', ' ', slug or '').strip()
+
+
+def _rewrite_meta(title: str, slug: str) -> str:
+    phrase = _slug_phrase(slug)
+    return (
+        f"Understand {phrase}, the workflow problems behind it, and how DEEMERGE helps teams reduce missed replies and context switching."
+    )[:155]
+
+
 def _fallback(page_title: str, slug: str) -> tuple[str, str, str, str]:
     title = page_title or slug.replace('-', ' ').title()
-    meta = f"Updated guide for {title} with clearer intent match and a practical DEEMERGE section."
+    meta = _rewrite_meta(title, slug)
     h1 = title
     body = f"""
-<h2>Why this workflow breaks down</h2>
-<p>Teams often lose time because the work is spread across multiple conversations and follow ups.</p>
-<h2>What to look for</h2>
-<p>The best setup is the one that gives visibility, reduces duplicate work, and makes ownership clear.</p>
+<p>Teams usually lose time because the work is spread across multiple conversations, inboxes, and follow ups.</p>
+<h2>Where the workflow breaks down</h2>
+<p>When ownership is unclear and context is fragmented, teams miss replies, duplicate work, and slow down execution.</p>
+<h2>What to look for instead</h2>
+<p>The best setup is the one that keeps context visible, reduces duplicate effort, and makes ownership clear.</p>
 <h2>How DEEMERGE solves this in practice</h2>
-<p>DEEMERGE helps by grouping scattered conversations into structured topics so teams can understand context and act faster.</p>
+<p>DEEMERGE groups scattered communication into structured topics so teams can understand context quickly and move work forward with less friction.</p>
+<h2>Next step with DEEMERGE</h2>
+<p>If your team is losing time across email and chat, book a demo or review pricing to see how DEEMERGE can help.</p>
 """.strip()
     return title, meta, h1, body
 
@@ -39,20 +54,27 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     )
     processed = 0
     for row in rows:
+        title = row['title_current'] or row['slug'].replace('-', ' ').title()
+        meta = _rewrite_meta(title, row['slug'])
+        h1 = title
         if anthropic:
             prompt = (
-                'Rewrite the article body as clean HTML fragment only. '
-                'Do not return markdown fences. Do not return <html>, <head>, <body>, <style>, <script>, or CSS. '
+                'Rewrite the article body as a clean HTML fragment only. '
+                'No markdown fences. No <html>, <head>, <body>, <style>, <script>, CSS, or <h1>. '
                 'Use only semantic content markup. '
-                f"Article title: {row['title_current']}. "
-                "Keep the search intent tighter and include a section with the exact heading 'How DEEMERGE solves this in practice'."
+                'Do not invent studies, percentages, averages, benchmarks, or research claims. '
+                'Do not sound generic, fluffy, or motivational. '
+                f"Article title: {title}. "
+                f"Slug context: {row['slug']}. "
+                "Keep the search intent tighter and make the article more practical. "
+                "Include one section with the exact heading 'How DEEMERGE solves this in practice'. "
+                "Include one final section with the exact heading 'Next step with DEEMERGE'."
             )
             try:
                 raw_body = anthropic.generate(prompt, fast=True, max_tokens=1400)
-                body = html_fragment_only(raw_body)
-                title = row['title_current']
-                meta = f"Updated guide to {row['title_current']} with a clearer DEEMERGE angle."
-                h1 = row['title_current']
+                body = sanitize_article_fragment(raw_body)
+                body = ensure_section(body, 'How DEEMERGE solves this in practice', '<h2>How DEEMERGE solves this in practice</h2><p>DEEMERGE helps by turning scattered communication into structured topics so teams can understand context faster and act without chasing updates across tools.</p>')
+                body = ensure_section(body, 'Next step with DEEMERGE', '<h2>Next step with DEEMERGE</h2><p>Book a demo or view pricing if you want a workflow that reduces missed replies, context switching, and unclear ownership.</p>')
                 if not body:
                     raise RuntimeError('Empty body after HTML cleanup')
             except Exception as exc:
