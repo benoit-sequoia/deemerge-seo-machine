@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+import hashlib
+import mimetypes
+from pathlib import Path
+
 import requests
 
 from app.config import Settings
@@ -76,6 +80,31 @@ class WebflowService:
                         out["fileId"] = value.get("fileId")
                     return out
         return None
+
+    def upload_asset_file(self, file_path: str, *, alt: Optional[str] = None, parent_folder: Optional[str] = None) -> dict[str, Any]:
+        if not self.site_id:
+            raise RuntimeError("WEBFLOW_SITE_ID is missing")
+        path = Path(file_path)
+        raw = path.read_bytes()
+        file_hash = hashlib.md5(raw).hexdigest()
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        payload: dict[str, Any] = {"fileName": path.name, "fileHash": file_hash}
+        if parent_folder:
+            payload["parentFolder"] = parent_folder
+        meta = self._request("POST", f"/sites/{self.site_id}/assets", json_data=payload)
+        upload_url = meta.get("uploadUrl")
+        upload_details = meta.get("uploadDetails") or {}
+        if not upload_url or not upload_details:
+            raise RuntimeError("Webflow asset metadata response missing uploadUrl or uploadDetails")
+        files = {"file": (path.name, raw, content_type)}
+        resp = requests.post(upload_url, data=upload_details, files=files, timeout=120)
+        if resp.status_code not in (200, 201, 204):
+            raise RuntimeError(f"Webflow asset binary upload failed: {resp.status_code} {resp.text[:500]}")
+        return {
+            "fileId": meta.get("id"),
+            "url": meta.get("hostedUrl") or meta.get("assetUrl") or upload_url,
+            "alt": alt or path.stem.replace("-", " ").title(),
+        }
 
     def create_item(self, field_data: dict[str, Any], *, is_draft: bool = True) -> dict[str, Any]:
         payload = {"isDraft": is_draft, "isArchived": False, "fieldData": field_data}

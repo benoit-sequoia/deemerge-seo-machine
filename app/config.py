@@ -19,6 +19,7 @@ DEFAULT_WEBFLOW_FIELD_MAP = {
     "featured_image": "post-image",
     "og_image": "og-image",
     "category": "post-category",
+    "read_time": "post-read-time-3",
 }
 
 

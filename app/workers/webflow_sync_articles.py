@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from app.image_tools import ensure_article_svg
 from app.services.webflow_service import WebflowService
 from app.workers._common import ensure_run_log, finish_run_log
 
@@ -11,6 +12,44 @@ def _estimate_read_time_minutes(html: str) -> str:
     words = len([w for w in html.replace('<', ' <').replace('>', '> ').split() if not w.startswith('<')])
     mins = max(4, round(words / 200))
     return f"{mins} - {mins + 2} minutes"
+
+
+def _ensure_local_article_image(db, draft) -> tuple[str, str]:
+    existing = db.fetchone(
+        """
+        SELECT gi.local_path, gi.alt_text
+        FROM generated_images gi
+        JOIN image_queue iq ON iq.id = gi.queue_id
+        WHERE iq.source_type='article' AND iq.source_id=?
+        ORDER BY gi.id DESC LIMIT 1
+        """,
+        [draft['article_draft_id']],
+    )
+    if existing and existing['local_path']:
+        return existing['local_path'], (existing['alt_text'] or draft['title_tag'])
+
+    iq = db.fetchone("SELECT id FROM image_queue WHERE source_type='article' AND source_id=?", [draft['article_draft_id']])
+    if iq:
+        queue_id = int(iq['id'])
+    else:
+        queue_id = db.insert(
+            "INSERT INTO image_queue(source_type, source_id, prompt, status) VALUES ('article', ?, ?, 'queued')",
+            [draft['article_draft_id'], f"Editorial DEEMERGE blog image for {draft['title_tag']}"]
+        )
+    local_path, alt_text = ensure_article_svg(draft['title_tag'], draft['slug'])
+    db.execute(
+        """
+        INSERT INTO generated_images(queue_id, local_path, alt_text, status)
+        VALUES (?, ?, ?, 'generated')
+        ON CONFLICT(queue_id) DO UPDATE SET
+          local_path=excluded.local_path,
+          alt_text=excluded.alt_text,
+          status='generated'
+        """,
+        [queue_id, local_path, alt_text],
+    )
+    db.execute("UPDATE image_queue SET status='generated', updated_at=CURRENT_TIMESTAMP WHERE id=?", [queue_id])
+    return local_path, alt_text
 
 
 def _field_data_from_draft(draft, field_map: dict[str, str], image_value: dict | None) -> dict:
@@ -24,6 +63,9 @@ def _field_data_from_draft(draft, field_map: dict[str, str], image_value: dict |
         field_map["seo_description"]: draft["meta_description"] or draft["excerpt"] or draft["h1"],
         field_map["published_date"]: now_iso,
     }
+    read_time_key = field_map.get("read_time", "post-read-time-3")
+    if read_time_key:
+        field_data[read_time_key] = _estimate_read_time_minutes(draft["body_html"])
     if image_value:
         if field_map.get("featured_image"):
             field_data[field_map["featured_image"]] = image_value
@@ -36,26 +78,18 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     run_id = ensure_run_log(db, "webflow_sync_articles")
     field_map = settings.webflow_field_map()
     service = WebflowService(settings)
-    image_value = None
-    try:
-        image_value = service.find_fallback_image_field_value(field_map.get("og_image", "og-image"), field_map.get("featured_image", "post-image"))
-    except Exception as exc:
-        logger.warning("Could not resolve fallback Webflow image: %s", exc)
-    if not image_value:
-        logger.warning("webflow_sync_articles skipped: no fallback image available for required og-image")
-        finish_run_log(db, run_id, "skipped", items_processed=0)
-        return 0
 
     site_row = db.fetchone("SELECT id FROM sites WHERE site_key='deemerge'")
     site_id = int(site_row["id"]) if site_row else None
     rows = db.fetchall(
         """
-        SELECT ad.id AS article_draft_id, q.id AS queue_id, kc.id AS keyword_candidate_id, kc.primary_keyword, ad.slug, ad.h1, ad.excerpt, ad.body_html, ad.title_tag, ad.meta_description
+        SELECT ad.id AS article_draft_id, q.id AS queue_id, kc.id AS keyword_candidate_id, kc.primary_keyword, ad.slug, ad.h1, ad.excerpt, ad.body_html, ad.title_tag, ad.meta_description, wi.id AS webflow_row_id, wi.item_id AS existing_item_id, wi.sync_status
         FROM article_drafts ad
         JOIN article_generation_queue q ON q.id = ad.queue_id
         JOIN keyword_candidates kc ON kc.id = q.keyword_candidate_id
         LEFT JOIN webflow_items wi ON wi.page_type='article' AND wi.source_id = ad.id
-        WHERE wi.id IS NULL AND q.status IN ('ready','drafted','validated','queued','briefing')
+        WHERE q.status IN ('ready','drafted','validated','queued','briefing','synced')
+          AND (wi.id IS NULL OR wi.sync_status != 'synced_with_image')
         ORDER BY ad.id ASC
         LIMIT ?
         """,
@@ -66,24 +100,29 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     logger.info("webflow_sync_articles candidates: %s", len(rows))
     for row in rows:
         try:
-            existing = service.find_item_by_slug(row["slug"])
-            if existing:
-                item_id = existing["id"]
-                field_data = _field_data_from_draft(row, field_map, image_value)
+            local_path, alt_text = _ensure_local_article_image(db, row)
+            image_value = service.upload_asset_file(local_path, alt=alt_text)
+            field_data = _field_data_from_draft(row, field_map, image_value)
+            if row['existing_item_id']:
+                item_id = row['existing_item_id']
                 service.update_item(item_id, field_data, is_draft=True)
             else:
-                field_data = _field_data_from_draft(row, field_map, image_value)
-                created = service.create_item(field_data, is_draft=True)
-                item_id = created.get("id") or created.get("item", {}).get("id")
+                existing = service.find_item_by_slug(row["slug"])
+                if existing:
+                    item_id = existing["id"]
+                    service.update_item(item_id, field_data, is_draft=True)
+                else:
+                    created = service.create_item(field_data, is_draft=True)
+                    item_id = created.get("id") or created.get("item", {}).get("id")
             db.execute(
                 """
                 INSERT INTO webflow_items(page_type, source_id, collection_id, item_id, slug, is_draft, sync_status, payload_hash)
-                VALUES ('article', ?, ?, ?, ?, 1, 'synced', ?)
+                VALUES ('article', ?, ?, ?, ?, 1, 'synced_with_image', ?)
                 ON CONFLICT(page_type, source_id) DO UPDATE SET
                   item_id=excluded.item_id,
                   slug=excluded.slug,
                   is_draft=1,
-                  sync_status='synced',
+                  sync_status='synced_with_image',
                   last_sync_at=CURRENT_TIMESTAMP,
                   payload_hash=excluded.payload_hash,
                   updated_at=CURRENT_TIMESTAMP
@@ -106,6 +145,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
                 )
             db.execute("UPDATE article_generation_queue SET status='synced' WHERE id=?", [row['queue_id']])
             processed += 1
+            logger.info("webflow_sync_articles synced draft %s -> %s", row['slug'], item_id)
         except Exception as exc:
             errors += 1
             logger.exception("webflow_sync_articles failed for article_draft %s: %s", row['article_draft_id'], exc)
