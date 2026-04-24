@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
-from app.image_tools import ensure_article_svg
+from app.image_tools import ensure_article_svg, build_article_image_prompt
+from app.services.openai_image_service import OpenAIImageService
 from app.services.webflow_service import WebflowService
 from app.workers._common import ensure_run_log, finish_run_log
 
@@ -14,10 +16,10 @@ def _estimate_read_time_minutes(html: str) -> str:
     return f"{mins} - {mins + 2} minutes"
 
 
-def _ensure_local_article_image(db, draft) -> tuple[str, str]:
+def _ensure_local_article_image(db, draft, settings, logger) -> tuple[str, str]:
     existing = db.fetchone(
         """
-        SELECT gi.local_path, gi.alt_text
+        SELECT gi.local_path, gi.alt_text, iq.id AS queue_id
         FROM generated_images gi
         JOIN image_queue iq ON iq.id = gi.queue_id
         WHERE iq.source_type='article' AND iq.source_id=?
@@ -26,17 +28,37 @@ def _ensure_local_article_image(db, draft) -> tuple[str, str]:
         [draft['article_draft_id']],
     )
     if existing and existing['local_path']:
-        return existing['local_path'], (existing['alt_text'] or draft['title_tag'])
-
-    iq = db.fetchone("SELECT id FROM image_queue WHERE source_type='article' AND source_id=?", [draft['article_draft_id']])
-    if iq:
-        queue_id = int(iq['id'])
+        local_path = str(existing['local_path'])
+        if not local_path.lower().endswith('.svg') and Path(local_path).exists():
+            return local_path, (existing['alt_text'] or draft['title_tag'])
+        queue_id = int(existing['queue_id'])
     else:
-        queue_id = db.insert(
-            "INSERT INTO image_queue(source_type, source_id, prompt, status) VALUES ('article', ?, ?, 'queued')",
-            [draft['article_draft_id'], f"Editorial DEEMERGE blog image for {draft['title_tag']}"]
-        )
-    local_path, alt_text = ensure_article_svg(draft['title_tag'], draft['slug'])
+        iq = db.fetchone("SELECT id FROM image_queue WHERE source_type='article' AND source_id=?", [draft['article_draft_id']])
+        if iq:
+            queue_id = int(iq['id'])
+        else:
+            queue_id = db.insert(
+                "INSERT INTO image_queue(source_type, source_id, prompt, status) VALUES ('article', ?, ?, 'queued')",
+                [draft['article_draft_id'], f"Editorial DEEMERGE blog image for {draft['title_tag']}"]
+            )
+
+    alt_text = draft['title_tag']
+    outdir = Path('/data/generated_images')
+    outdir.mkdir(parents=True, exist_ok=True)
+    png_path = outdir / f"{draft['slug']}.png"
+
+    try:
+        openai_image = OpenAIImageService(settings)
+        if openai_image.available():
+            prompt = build_article_image_prompt(draft['title_tag'], draft['slug'], draft.get('excerpt'))
+            local_path = openai_image.generate_image_file(prompt=prompt, output_path=str(png_path))
+        else:
+            logger.warning('OPENAI_API_KEY missing, using placeholder image for %s', draft['slug'])
+            local_path, alt_text = ensure_article_svg(draft['title_tag'], draft['slug'])
+    except Exception as exc:
+        logger.warning('Real image generation failed for %s, falling back to placeholder: %s', draft['slug'], exc)
+        local_path, alt_text = ensure_article_svg(draft['title_tag'], draft['slug'])
+
     db.execute(
         """
         INSERT INTO generated_images(queue_id, local_path, alt_text, status)
@@ -88,8 +110,10 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
         JOIN article_generation_queue q ON q.id = ad.queue_id
         JOIN keyword_candidates kc ON kc.id = q.keyword_candidate_id
         LEFT JOIN webflow_items wi ON wi.page_type='article' AND wi.source_id = ad.id
+        LEFT JOIN image_queue iq ON iq.source_type='article' AND iq.source_id = ad.id
+        LEFT JOIN generated_images gi ON gi.queue_id = iq.id
         WHERE q.status IN ('ready','drafted','validated','queued','briefing','synced')
-          AND (wi.id IS NULL OR wi.sync_status != 'synced_with_image')
+          AND (wi.id IS NULL OR wi.sync_status='needs_image_resync' OR gi.id IS NULL OR gi.local_path LIKE '%.svg')
         ORDER BY ad.id ASC
         LIMIT ?
         """,
@@ -100,7 +124,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
     logger.info("webflow_sync_articles candidates: %s", len(rows))
     for row in rows:
         try:
-            local_path, alt_text = _ensure_local_article_image(db, row)
+            local_path, alt_text = _ensure_local_article_image(db, row, settings, logger)
             image_value = service.upload_asset_file(local_path, alt=alt_text)
             field_data = _field_data_from_draft(row, field_map, image_value)
             if row['existing_item_id']:

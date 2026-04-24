@@ -20,7 +20,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
         sql = """
         SELECT id, page_type, source_id, item_id, slug
         FROM webflow_items
-        WHERE sync_status='synced' AND slug=?
+        WHERE sync_status IN ('synced','synced_with_image') AND slug=?
         """
         params = [target_slug]
         if target_page_type:
@@ -56,7 +56,7 @@ def run(*, db, settings, logger, limit: int = 10) -> int:
         SELECT wp.id AS plan_id, wi.id AS webflow_item_row_id, wi.item_id, wi.page_type, wi.source_id, wi.slug
         FROM publish_plan wp
         JOIN webflow_items wi ON wi.page_type = wp.source_type AND wi.source_id = wp.source_id
-        WHERE wp.status='planned' AND wp.planned_publish_ts_utc <= CURRENT_TIMESTAMP AND wi.sync_status='synced'
+        WHERE wp.status='planned' AND wp.planned_publish_ts_utc <= CURRENT_TIMESTAMP AND wi.sync_status IN ('synced','synced_with_image')
         ORDER BY wp.planned_publish_ts_utc ASC
         LIMIT ?
         """,

@@ -64,3 +64,17 @@ def ensure_article_svg(title: str, slug: str, output_dir: str | Path = '/data/ge
     svg = build_article_svg(title=title, slug=slug)
     path.write_text(svg, encoding='utf-8')
     return str(path), title
+
+
+def build_article_image_prompt(title: str, slug: str, excerpt: str | None = None) -> str:
+    topic = slug.replace('-', ' ')
+    base = excerpt or title
+    return (
+        f"Create a premium editorial featured image for a B2B SaaS blog article titled '{title}'. "
+        f"Topic: {topic}. Context: {base}. "
+        "Use a modern professional illustration style, clean 16:9 landscape composition, "
+        "blue, navy, teal and white palette aligned to a SaaS brand, subtle depth and polish, "
+        "visual metaphor for teamwork, email, chat, shared inboxes, prioritization or workflow depending on the topic. "
+        "No words, no letters, no UI screenshots, no logos, no watermarks, no browser chrome, no fake app interface text. "
+        "The image should be visually specific to the article topic and suitable as a website featured image."
+    )

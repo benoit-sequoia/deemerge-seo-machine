@@ -33,3 +33,10 @@ V3 fixes: live Search Console support when Google credentials are valid, URL-mat
 
 
 V5 quality patch adds stricter meta generation, no unsupported claims, no h1 in body, mandatory DEEMERGE section, and mandatory CTA section.
+
+
+Additional env for real article image generation:
+- OPENAI_API_KEY
+- OPENAI_IMAGE_MODEL (default gpt-image-1)
+- OPENAI_IMAGE_SIZE (default 1536x1024)
+- OPENAI_IMAGE_QUALITY (default medium)

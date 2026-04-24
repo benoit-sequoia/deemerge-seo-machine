@@ -33,6 +33,10 @@ class Settings:
     max_new_articles_per_week: int
     max_rewrites_per_week: int
     anthropic_api_key: Optional[str]
+    openai_api_key: Optional[str]
+    openai_image_model: Optional[str]
+    openai_image_size: Optional[str]
+    openai_image_quality: Optional[str]
     anthropic_model_main: Optional[str]
     anthropic_model_fast: Optional[str]
     webflow_token: Optional[str]
@@ -86,6 +90,10 @@ def load_settings() -> Settings:
         max_new_articles_per_week=int(os.environ.get("MAX_NEW_ARTICLES_PER_WEEK", "10")),
         max_rewrites_per_week=int(os.environ.get("MAX_REWRITES_PER_WEEK", "5")),
         anthropic_api_key=_optional("ANTHROPIC_API_KEY"),
+        openai_api_key=_optional("OPENAI_API_KEY"),
+        openai_image_model=_optional("OPENAI_IMAGE_MODEL") or "gpt-image-1",
+        openai_image_size=_optional("OPENAI_IMAGE_SIZE") or "1536x1024",
+        openai_image_quality=_optional("OPENAI_IMAGE_QUALITY") or "medium",
         anthropic_model_main=_optional("ANTHROPIC_MODEL_MAIN"),
         anthropic_model_fast=_optional("ANTHROPIC_MODEL_FAST"),
         webflow_token=_optional("WEBFLOW_TOKEN"),
